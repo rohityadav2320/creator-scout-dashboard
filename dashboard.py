@@ -13,7 +13,7 @@ import pandas as pd
 import db
 from hashtag_library import HASHTAG_LIBRARY
 
-st.set_page_config(page_title="Creator Scout", page_icon="🎬", layout="wide")
+st.set_page_config(page_title="Creator Scout — Vidrow", page_icon="🎬", layout="wide")
 
 # ── CSS — clean dark style ────────────────────────────────────────────────────
 st.markdown("""
@@ -75,7 +75,7 @@ def push_to_gsheet(creators):
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 🎬 Creator Scout")
-    st.caption("Reel discovery")
+    st.caption("by Vidrow")
     st.divider()
 
     page = st.radio(
