@@ -109,18 +109,13 @@ with tab_new:
     st.caption("This creates a job. An online agent picks it up, scrapes on its "
                "own machine (real login), and the results appear under Creators.")
 
-    jtype = st.radio("Type", ["Hashtag search", "Reference creator"], horizontal=True)
+    jtype = st.radio("Type", ["Hashtag search", "Reference creator", "📱 Trained Feed"], horizontal=True)
     agents = db.fetch_agents()
     online_labels = [a.get("label", "") for a in agents if _agent_online(a.get("last_seen"))]
     acct = st.selectbox(
-        "Run on agent (machine)",
+        "Run on agent / account",
         options=(online_labels or ["(no agent online)"]),
-        help="Which team machine should run this scrape.",
-    )
-    ig_account = st.text_input(
-        "Instagram account to scrape from",
-        placeholder="e.g. myburner123",
-        help="The Instagram username whose browser session will be used. First run opens a login window.",
+        help="Which team machine + Instagram account should run this scrape.",
     )
 
     if jtype == "Hashtag search":
@@ -137,16 +132,13 @@ with tab_new:
                 st.error("No agent is online. Start `agent.py` on a team machine first.")
             elif not tags:
                 st.error("Enter at least one hashtag.")
-            elif not ig_account.strip():
-                st.error("Enter the Instagram account username to scrape from.")
             else:
                 jid, err = db.create_job(
                     "hashtag",
-                    {"hashtags": tags, "max": int(hmax), "enrich": bool(henrich),
-                     "ig_account": ig_account.strip().lstrip("@")},
+                    {"hashtags": tags, "max": int(hmax), "enrich": bool(henrich)},
                     account_label=acct, created_by=me)
                 if not err:
-                    st.success(f"✅ Queued job #{jid} for **{acct}** (@{ig_account.strip()}) — {', '.join(tags)}")
+                    st.success(f"✅ Queued job #{jid} for **{acct}** — {', '.join(tags)}")
                 else:
                     st.error(f"❌ {err}")
     else:
@@ -164,16 +156,68 @@ with tab_new:
                 st.error("No agent is online. Start `agent.py` on a team machine first.")
             elif not seeds:
                 st.error("Enter at least one seed creator.")
-            elif not ig_account.strip():
-                st.error("Enter the Instagram account username to scrape from.")
             else:
                 jid, err = db.create_job(
                     "reference",
-                    {"seeds": seeds, "max": int(rmax), "depth": int(rdepth),
-                     "ig_account": ig_account.strip().lstrip("@")},
+                    {"seeds": seeds, "max": int(rmax), "depth": int(rdepth)},
                     account_label=acct, created_by=me)
                 if not err:
                     st.success(f"✅ Queued job #{jid} for **{acct}** — like @{', @'.join(seeds)}")
+                else:
+                    st.error(f"❌ {err}")
+
+    elif jtype == "📱 Trained Feed":
+        st.info(
+            "📱 **Trained Feed** scrapes your Instagram account's algorithmic feed via the "
+            "mobile API — **no browser opens, feed does NOT change** (no watch-time signals sent). "
+            "Train your burner account once on your phone by watching niche reels, then scrape here anytime.",
+            icon="ℹ️"
+        )
+        tf_ig_user = st.text_input("Instagram username (burner account)", placeholder="your_burner_ig")
+        tf_session = st.text_input(
+            "Session ID (recommended — no login popup)",
+            type="password",
+            placeholder="Paste sessionid from browser cookies",
+            help="Get it: Instagram.com → F12 → Application → Cookies → sessionid value. "
+                 "Safer than password, no 2FA needed."
+        )
+        with st.expander("Or use password instead"):
+            tf_pass = st.text_input("Instagram Password", type="password", key="tf_pass_dash")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            tf_max = st.number_input("Max reels to scan", 10, 500, 50, step=10, key="tf_max")
+        with c2:
+            tf_min_followers = st.number_input("Min followers", 0, 10_000_000, 10000, step=1000, key="tf_minfol")
+
+        tf_tags = st.text_input(
+            "Must contain hashtag (optional — filter results)",
+            placeholder="tamilcomedy, comedy",
+            help="Only keep reels that contain these hashtags in caption. Leave blank = all reels."
+        )
+
+        if st.button("📱 Queue trained feed scrape", type="primary", use_container_width=True):
+            if not online_labels:
+                st.error("No agent is online. Start `agent.py` on a team machine first.")
+            elif not tf_ig_user:
+                st.error("Enter the Instagram username.")
+            elif not (tf_session or tf_pass):
+                st.error("Enter either session ID or password.")
+            else:
+                hashtag_filter = [t.strip().lstrip("#") for t in tf_tags.replace(",", " ").split() if t.strip()]
+                jid, err = db.create_job(
+                    "trained_feed",
+                    {
+                        "ig_user": tf_ig_user.strip(),
+                        "sessionid": tf_session.strip() if tf_session else "",
+                        "password": tf_pass.strip() if tf_pass else "",
+                        "max": int(tf_max),
+                        "min_followers": int(tf_min_followers),
+                        "hashtags": hashtag_filter,
+                    },
+                    account_label=acct, created_by=me)
+                if not err:
+                    st.success(f"✅ Queued trained feed job #{jid} for **{acct}** — @{tf_ig_user}")
                 else:
                     st.error(f"❌ {err}")
 
