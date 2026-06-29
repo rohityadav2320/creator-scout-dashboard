@@ -113,9 +113,14 @@ with tab_new:
     agents = db.fetch_agents()
     online_labels = [a.get("label", "") for a in agents if _agent_online(a.get("last_seen"))]
     acct = st.selectbox(
-        "Run on agent / account",
+        "Run on agent (machine)",
         options=(online_labels or ["(no agent online)"]),
-        help="Which team machine + Instagram account should run this scrape.",
+        help="Which team machine should run this scrape.",
+    )
+    ig_account = st.text_input(
+        "Instagram account to scrape from",
+        placeholder="e.g. myburner123",
+        help="The Instagram username whose browser session will be used. First run opens a login window.",
     )
 
     if jtype == "Hashtag search":
@@ -132,13 +137,16 @@ with tab_new:
                 st.error("No agent is online. Start `agent.py` on a team machine first.")
             elif not tags:
                 st.error("Enter at least one hashtag.")
+            elif not ig_account.strip():
+                st.error("Enter the Instagram account username to scrape from.")
             else:
                 jid, err = db.create_job(
                     "hashtag",
-                    {"hashtags": tags, "max": int(hmax), "enrich": bool(henrich)},
+                    {"hashtags": tags, "max": int(hmax), "enrich": bool(henrich),
+                     "ig_account": ig_account.strip().lstrip("@")},
                     account_label=acct, created_by=me)
                 if not err:
-                    st.success(f"✅ Queued job #{jid} for **{acct}** — {', '.join(tags)}")
+                    st.success(f"✅ Queued job #{jid} for **{acct}** (@{ig_account.strip()}) — {', '.join(tags)}")
                 else:
                     st.error(f"❌ {err}")
     else:
@@ -156,10 +164,13 @@ with tab_new:
                 st.error("No agent is online. Start `agent.py` on a team machine first.")
             elif not seeds:
                 st.error("Enter at least one seed creator.")
+            elif not ig_account.strip():
+                st.error("Enter the Instagram account username to scrape from.")
             else:
                 jid, err = db.create_job(
                     "reference",
-                    {"seeds": seeds, "max": int(rmax), "depth": int(rdepth)},
+                    {"seeds": seeds, "max": int(rmax), "depth": int(rdepth),
+                     "ig_account": ig_account.strip().lstrip("@")},
                     account_label=acct, created_by=me)
                 if not err:
                     st.success(f"✅ Queued job #{jid} for **{acct}** — like @{', @'.join(seeds)}")
