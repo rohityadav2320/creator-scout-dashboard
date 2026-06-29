@@ -1,17 +1,7 @@
 """
-Creator Scout — Web Dashboard (the hosted control plane).
-
-This is the SHARED web app the team opens (one URL). It does NOT scrape and has
-NO browser — it only:
-  • queues scrape jobs (which local agents pick up and run),
-  • shows job status + which agents are online,
-  • shows the shared creator database + CRM (status/notes), and
-  • pushes selected creators to the Google Sheet.
-
-Because it never touches Playwright, it deploys cleanly to Streamlit Cloud.
-The local scraping portal (app.py) and the agent (agent.py) are unaffected.
-
-Run locally:   python3 -m streamlit run dashboard.py --server.port 8504
+Creator Scout — Web Dashboard
+Clean Trendwell-style UI. Queues jobs for local agents to pick up and run.
+No browser, no Playwright — pure Supabase reads/writes.
 """
 import io
 import time
@@ -21,48 +11,24 @@ import streamlit as st
 import pandas as pd
 
 import db
+from hashtag_library import HASHTAG_LIBRARY
 
-st.set_page_config(page_title="Creator Scout — Dashboard", page_icon="🎬", layout="wide")
+st.set_page_config(page_title="Creator Scout", page_icon="🎬", layout="wide")
 
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-def to_excel(df):
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as w:
-        df.to_excel(w, index=False, sheet_name="Creators")
-    return buf.getvalue()
-
-
-def to_csv(df):
-    return df.to_csv(index=False).encode("utf-8")
-
-
-def push_to_gsheet(creators):
-    import requests
-    try:
-        url = st.secrets.get("gsheet_webapp_url", "")
-    except Exception:
-        url = ""
-    if not url:
-        return False, "Google Sheet not connected (add gsheet_webapp_url to secrets)."
-    if not creators:
-        return False, "No creators selected."
-    try:
-        r = requests.post(url, json={"creators": creators}, timeout=25)
-        if r.status_code in (200, 302):
-            try:
-                d = r.json()
-                msg = f"Added {d.get('added', len(creators))} to the sheet"
-                if d.get("skipped"):
-                    msg += f" · skipped {d['skipped']} (already there)"
-                return True, msg + "."
-            except Exception:
-                return True, f"Sent {len(creators)} to the sheet."
-        return False, f"Sheet responded {r.status_code}."
-    except Exception as e:
-        return False, f"Could not reach the sheet: {e}"
+# ── CSS — clean dark style ────────────────────────────────────────────────────
+st.markdown("""
+<style>
+[data-testid="stSidebar"] { background: #0f0f0f; }
+.block-container { padding-top: 2rem; max-width: 1100px; }
+div[data-testid="metric-container"] { background: #1a1a1a; border-radius: 8px; padding: 12px; }
+.stButton > button { border-radius: 8px; font-weight: 600; }
+.stButton > button[kind="primary"] { background: #6366f1; border: none; }
+.stButton > button[kind="primary"]:hover { background: #4f46e5; }
+</style>
+""", unsafe_allow_html=True)
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
 def _agent_online(last_seen, within=40):
     if not last_seen:
         return False
@@ -73,135 +39,267 @@ def _agent_online(last_seen, within=40):
         return False
 
 
-# ── Sidebar ──────────────────────────────────────────────────────────────────
+def to_excel(df):
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df.to_excel(w, index=False, sheet_name="Creators")
+    return buf.getvalue()
+
+
+def push_to_gsheet(creators):
+    import requests
+    try:
+        url = st.secrets.get("gsheet_webapp_url", "")
+    except Exception:
+        url = ""
+    if not url:
+        return False, "Google Sheet not connected."
+    if not creators:
+        return False, "No creators selected."
+    try:
+        r = requests.post(url, json={"creators": creators}, timeout=25)
+        if r.status_code in (200, 302):
+            try:
+                d = r.json()
+                msg = f"Added {d.get('added', len(creators))} to sheet"
+                if d.get("skipped"):
+                    msg += f" · skipped {d['skipped']} (already there)"
+                return True, msg + "."
+            except Exception:
+                return True, f"Sent {len(creators)} to sheet."
+        return False, f"Sheet responded {r.status_code}."
+    except Exception as e:
+        return False, f"Could not reach sheet: {e}"
+
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("🎬 Creator Scout")
-    st.caption("Team Dashboard")
+    st.markdown("## 🎬 Creator Scout")
+    st.caption("Reel discovery")
     st.divider()
-    me = st.text_input("Your name", placeholder="e.g. Rohit",
-                       help="Tags the jobs you queue + creators you save.")
-    st.divider()
-    if not db.is_configured():
-        st.error("Supabase not connected. Add credentials to secrets.")
-    else:
-        agents = db.fetch_agents()
-        online = [a for a in agents if _agent_online(a.get("last_seen"))]
-        st.subheader("🖥️ Agents")
-        if online:
-            for a in online:
-                st.markdown(f"🟢 **{a.get('label','agent')}**")
-        else:
-            st.markdown("⚪ No agents online")
-        st.caption("Agents are team laptops running `agent.py`. A scrape needs at "
-                   "least one online agent for its account.")
 
-st.title("Creator Scout — Dashboard")
-
-if not db.is_configured():
-    st.warning("Connect Supabase (secrets.toml) to use the dashboard.")
-    st.stop()
-
-tab_new, tab_jobs, tab_db = st.tabs(["➕ New Scrape", "📋 Jobs", "🗄️ Creators / CRM"])
-
-# ── Tab: New Scrape (queue a job) ────────────────────────────────────────────
-with tab_new:
-    st.subheader("Queue a scrape")
-    st.caption("This creates a job. An online agent picks it up, scrapes on its "
-               "own machine (real login), and the results appear under Creators.")
-
-    jtype = st.radio("Type", ["Hashtag search", "Reference creator", "📱 Trained Feed"], horizontal=True)
-    agents = db.fetch_agents()
-    online_labels = [a.get("label", "") for a in agents if _agent_online(a.get("last_seen"))]
-    acct = st.selectbox(
-        "Run on agent / account",
-        options=(online_labels or ["(no agent online)"]),
-        help="Which team machine + Instagram account should run this scrape.",
+    page = st.radio(
+        "Navigate",
+        ["🏠 Home", "➕ New Scrape", "📋 Jobs", "🗄️ Creators / CRM", "📲 Install Agent"],
+        label_visibility="collapsed",
     )
 
-    if jtype == "Hashtag search":
-        tags_in = st.text_area("Hashtags (comma or space separated)",
-                               placeholder="tamilskit, tamilcomedy, chennaicomedy")
-        c1, c2 = st.columns(2)
-        with c1:
-            hmax = st.number_input("Max creators", 10, 500, 50, step=10, key="hmax")
-        with c2:
-            henrich = st.checkbox("Fetch followers + email", value=True, key="henrich")
-        if st.button("➕ Queue hashtag scrape", type="primary", use_container_width=True):
-            tags = [t.strip().lstrip("#") for t in tags_in.replace(",", " ").split() if t.strip()]
-            if not online_labels:
-                st.error("No agent is online. Start `agent.py` on a team machine first.")
-            elif not tags:
-                st.error("Enter at least one hashtag.")
-            else:
-                jid, err = db.create_job(
-                    "hashtag",
-                    {"hashtags": tags, "max": int(hmax), "enrich": bool(henrich)},
-                    account_label=acct, created_by=me)
-                if not err:
-                    st.success(f"✅ Queued job #{jid} for **{acct}** — {', '.join(tags)}")
-                else:
-                    st.error(f"❌ {err}")
-    elif jtype == "Reference creator":
-        seeds_in = st.text_area("Seed creator username(s) (comma separated)",
-                                placeholder="some_creator, another_creator")
-        c1, c2 = st.columns(2)
-        with c1:
-            rmax = st.number_input("Max creators", 10, 500, 100, step=10, key="rmax")
-        with c2:
-            rdepth = st.select_slider("Similar-creator depth", options=[0, 1, 2], value=1,
-                                      key="rdepth")
-        if st.button("➕ Queue reference scrape", type="primary", use_container_width=True):
-            seeds = [s.strip().lstrip("@") for s in seeds_in.split(",") if s.strip()]
-            if not online_labels:
-                st.error("No agent is online. Start `agent.py` on a team machine first.")
-            elif not seeds:
-                st.error("Enter at least one seed creator.")
-            else:
-                jid, err = db.create_job(
-                    "reference",
-                    {"seeds": seeds, "max": int(rmax), "depth": int(rdepth)},
-                    account_label=acct, created_by=me)
-                if not err:
-                    st.success(f"✅ Queued job #{jid} for **{acct}** — like @{', @'.join(seeds)}")
-                else:
-                    st.error(f"❌ {err}")
+    st.divider()
 
-    elif jtype == "📱 Trained Feed":
-        st.info(
-            "📱 **Trained Feed** — agent apne Instagram account ka /reels/ feed browser mein kholega "
-            "aur scroll karke creators collect karega. Same browser, same login — koi extra step nahi.\n\n"
-            "**Pehle ek baar:** Apne phone pe burner account se niche reels dekho → algorithm train hoga → "
-            "phir yahan se jitni baar scrape karo, feed nahi badlegi (browser sirf read karta hai, "
-            "watch-time signal nahi jaata Instagram ko).",
+    # Agent status
+    if db.is_configured():
+        agents = db.fetch_agents()
+        online = [a for a in agents if _agent_online(a.get("last_seen"))]
+        if online:
+            for a in online:
+                st.markdown(f"🟢 **{a.get('label', 'agent')}**")
+        else:
+            st.markdown("⚪ No agents online")
+    else:
+        st.error("Supabase not connected.")
+
+
+# ── Page: Home ────────────────────────────────────────────────────────────────
+if page == "🏠 Home":
+    st.title("Creator Scout")
+    st.caption("Find Instagram creators for your brand — fast.")
+    st.divider()
+
+    if not db.is_configured():
+        st.warning("Add Supabase credentials to Streamlit secrets to get started.")
+        st.stop()
+
+    # Quick stats
+    rows, _ = db.fetch_all_reels(limit=5000)
+    df = pd.DataFrame(rows) if rows else pd.DataFrame()
+    total = len(df)
+    confirmed = len(df[df["status"] == "Confirmed"]) if total else 0
+    contacted = len(df[df["status"] == "Contacted"]) if total else 0
+    to_contact = len(df[df["status"] == "To Contact"]) if total else 0
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Creators", total)
+    c2.metric("To Contact", to_contact)
+    c3.metric("Contacted", contacted)
+    c4.metric("Confirmed", confirmed)
+
+    st.divider()
+
+    # Recent jobs
+    st.subheader("Recent jobs")
+    jobs = db.fetch_jobs(limit=5)
+    if jobs:
+        STATUS_ICON = {"queued": "🕒", "running": "⏳", "done": "✅", "error": "❌"}
+        for j in jobs:
+            p = j.get("params") or {}
+            target = ", ".join(p.get("hashtags") or p.get("seeds") or ["feed"])
+            st.markdown(
+                f"{STATUS_ICON.get(j.get('status'), '')} **{j.get('type', '').title()}** — "
+                f"{target[:50]} &nbsp;·&nbsp; {j.get('result_count', 0)} creators "
+                f"&nbsp;·&nbsp; by {j.get('created_by', '—')}"
+            )
+    else:
+        st.info("No jobs yet. Go to **New Scrape** to start.")
+
+
+# ── Page: New Scrape ──────────────────────────────────────────────────────────
+elif page == "➕ New Scrape":
+    st.title("New scrape")
+    st.caption("Queue a run. Your local agent picks it up automatically.")
+
+    if not db.is_configured():
+        st.warning("Supabase not connected.")
+        st.stop()
+
+    agents = db.fetch_agents()
+    online_agents = [a for a in agents if _agent_online(a.get("last_seen"))]
+    online_labels = [a.get("label", "") for a in online_agents]
+
+    col_form, col_how = st.columns([3, 2], gap="large")
+
+    with col_form:
+        st.markdown("#### Configure run")
+        st.caption("Defaults come from the category — tweak just for this run if you like.")
+
+        scrape_type = st.selectbox(
+            "Scrape type",
+            ["Hashtag search", "Reference creator", "📱 Trained Feed"],
+            label_visibility="visible",
         )
-        c1, c2 = st.columns(2)
-        with c1:
-            tf_max = st.number_input("Max reels to scan", 10, 300, 50, step=10, key="tf_max")
-        with c2:
-            tf_min_followers = st.number_input("Min followers", 0, 10_000_000, 10000, step=1000, key="tf_minfol")
 
-        if st.button("📱 Queue trained feed scrape", type="primary", use_container_width=True):
-            if not online_labels:
-                st.error("No agent is online. Start `agent.py` on a team machine first.")
+        if scrape_type == "Hashtag search":
+            category = st.selectbox("Category", ["— pick a category —"] + list(HASHTAG_LIBRARY.keys()))
+            if category != "— pick a category —":
+                default_kws = ", ".join(HASHTAG_LIBRARY[category][:6])
             else:
-                jid, err = db.create_job(
-                    "trained_feed",
-                    {
-                        "max": int(tf_max),
-                        "min_followers": int(tf_min_followers),
-                    },
-                    account_label=acct, created_by=me)
-                if not err:
-                    st.success(f"✅ Queued trained feed job #{jid} for **{acct}**")
-                else:
-                    st.error(f"❌ {err}")
+                default_kws = ""
+            keywords = st.text_input("Keywords / Hashtags", value=default_kws,
+                                     placeholder="comedy, funnyreels, skit")
 
-# ── Tab: Jobs ────────────────────────────────────────────────────────────────
-with tab_jobs:
-    top = st.columns([1, 4])
-    with top[0]:
-        if st.button("🔄 Refresh", use_container_width=True, key="jobs_refresh"):
-            st.rerun()
+            c1, c2 = st.columns(2)
+            with c1:
+                max_creators = st.number_input("How many to find", 10, 500, 50, step=10)
+            with c2:
+                min_followers = st.number_input("Min followers", 0, 1_000_000, 10000, step=1000)
+
+            enrich = st.checkbox("Fetch followers + email", value=True)
+
+        elif scrape_type == "Reference creator":
+            seeds_in = st.text_input("Seed creator username(s)",
+                                     placeholder="e.g. some_creator, another_creator")
+            c1, c2 = st.columns(2)
+            with c1:
+                max_creators = st.number_input("How many to find", 10, 500, 100, step=10)
+            with c2:
+                depth = st.select_slider("Similar-creator depth", options=[0, 1, 2], value=1)
+
+        else:  # Trained Feed
+            st.info(
+                "Opens your trained Instagram account's /reels/ feed in the browser and "
+                "scrolls to collect creators. Train your burner account once on your phone "
+                "by watching niche reels — the algorithm remembers. "
+                "Scraping here does NOT change the feed (no watch signals sent)."
+            )
+            c1, c2 = st.columns(2)
+            with c1:
+                max_creators = st.number_input("Max reels to scan", 10, 300, 50, step=10)
+            with c2:
+                min_followers = st.number_input("Min followers", 0, 1_000_000, 10000, step=1000)
+
+        st.divider()
+
+        # Agent + name row
+        a1, a2 = st.columns(2)
+        with a1:
+            acct = st.selectbox(
+                "Run on account",
+                options=(online_labels or ["(no agent online)"]),
+            )
+            if online_agents:
+                st.markdown(f"🟢 Online: **{acct}**")
+            else:
+                st.markdown("⚪ No agents online — start `agent.py` first")
+        with a2:
+            me = st.text_input("Your name", placeholder="e.g. Priya")
+
+        # Queue button
+        if st.button("▶ Start scrape", type="primary", use_container_width=True):
+            if not online_labels:
+                st.error("No agent online. Start the agent on your laptop first.")
+            else:
+                if scrape_type == "Hashtag search":
+                    tags = [t.strip().lstrip("#") for t in keywords.replace(",", " ").split() if t.strip()]
+                    if not tags:
+                        st.error("Enter at least one keyword/hashtag.")
+                    else:
+                        jid, err = db.create_job(
+                            "hashtag",
+                            {"hashtags": tags, "max": int(max_creators),
+                             "enrich": bool(enrich), "min_followers": int(min_followers)},
+                            account_label=acct, created_by=me)
+                        if not err:
+                            st.success(f"✅ Queued! Job #{jid} for **{acct}** — {', '.join(tags[:3])}")
+                        else:
+                            st.error(f"❌ {err}")
+
+                elif scrape_type == "Reference creator":
+                    seeds = [s.strip().lstrip("@") for s in seeds_in.split(",") if s.strip()]
+                    if not seeds:
+                        st.error("Enter at least one seed creator username.")
+                    else:
+                        jid, err = db.create_job(
+                            "reference",
+                            {"seeds": seeds, "max": int(max_creators), "depth": int(depth)},
+                            account_label=acct, created_by=me)
+                        if not err:
+                            st.success(f"✅ Queued! Job #{jid} for **{acct}** — @{', @'.join(seeds)}")
+                        else:
+                            st.error(f"❌ {err}")
+
+                else:  # Trained Feed
+                    jid, err = db.create_job(
+                        "trained_feed",
+                        {"max": int(max_creators), "min_followers": int(min_followers)},
+                        account_label=acct, created_by=me)
+                    if not err:
+                        st.success(f"✅ Queued! Trained feed job #{jid} for **{acct}**")
+                    else:
+                        st.error(f"❌ {err}")
+
+    with col_how:
+        st.markdown("#### ✦ How it works")
+        st.caption("What happens after you click start.")
+        st.markdown("""
+**1 — Queued**
+Recorded instantly — this page never freezes.
+
+**2 — Picked up**
+Your laptop's agent sees the job within seconds.
+
+**3 — Scraping**
+Reels found on your own WiFi, your own session.
+
+**4 — Synced**
+Results land here under Creators / CRM.
+        """)
+
+        if online_agents:
+            st.divider()
+            st.markdown("**Active agents**")
+            for a in online_agents:
+                st.markdown(f"🟢 {a.get('label', 'agent')}")
+
+
+# ── Page: Jobs ────────────────────────────────────────────────────────────────
+elif page == "📋 Jobs":
+    st.title("Jobs")
+    if not db.is_configured():
+        st.warning("Supabase not connected.")
+        st.stop()
+
+    if st.button("🔄 Refresh"):
+        st.rerun()
+
     jobs = db.fetch_jobs(limit=100)
     if not jobs:
         st.info("No jobs yet. Queue one from **New Scrape**.")
@@ -210,27 +308,29 @@ with tab_jobs:
         rows = []
         for j in jobs:
             p = j.get("params") or {}
-            target = ", ".join(p.get("hashtags") or p.get("seeds") or [])
+            target = ", ".join(p.get("hashtags") or p.get("seeds") or ["feed"])
             rows.append({
                 "#": j.get("id"),
-                "Status": f"{STATUS_ICON.get(j.get('status'),'')} {j.get('status','')}",
+                "Status": f"{STATUS_ICON.get(j.get('status'), '')} {j.get('status', '')}",
                 "Type": j.get("type", ""),
                 "Target": target[:60],
                 "Results": j.get("result_count", 0),
                 "Account": j.get("account_label", ""),
                 "By": j.get("created_by", ""),
-                "Agent": j.get("agent_label", ""),
                 "Progress / Error": (j.get("error") or j.get("progress") or "")[:80],
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-        st.caption("Tip: a job stays 🕒 queued until an agent for that account is online.")
+        st.caption("Jobs stay 🕒 queued until an agent for that account is online.")
 
-# ── Tab: Creators / CRM ──────────────────────────────────────────────────────
-with tab_db:
-    top = st.columns([1, 3])
-    with top[0]:
-        refresh = st.button("🔄 Refresh", use_container_width=True, key="db_refresh")
-    if refresh or "dash_rows" not in st.session_state:
+
+# ── Page: Creators / CRM ──────────────────────────────────────────────────────
+elif page == "🗄️ Creators / CRM":
+    st.title("Creators")
+    if not db.is_configured():
+        st.warning("Supabase not connected.")
+        st.stop()
+
+    if st.button("🔄 Refresh", key="db_refresh") or "dash_rows" not in st.session_state:
         with st.spinner("Loading creators…"):
             st.session_state.dash_rows, st.session_state.dash_err = db.fetch_all_reels(limit=5000)
 
@@ -242,8 +342,7 @@ with tab_db:
         st.info("No creators yet. Queue a scrape and let an agent run it.")
     else:
         df = pd.DataFrame(rows)
-        for col, d in [("status", "To Contact"), ("notes", ""), ("scraped_by", ""),
-                       ("contact_email", ""), ("category", "")]:
+        for col, d in [("status", "To Contact"), ("notes", ""), ("contact_email", ""), ("category", "")]:
             if col not in df.columns:
                 df[col] = d
         df["status"] = df["status"].fillna("To Contact").replace("", "To Contact")
@@ -257,13 +356,16 @@ with tab_db:
         for i, s in enumerate(db.STATUS_OPTIONS):
             pcols[i].metric(s, counts.get(s, 0))
 
+        st.divider()
+
         # Filters
         f1, f2 = st.columns([1, 2])
         with f1:
-            sf = st.selectbox("Status", ["All"] + db.STATUS_OPTIONS, key="dash_sf")
+            sf = st.selectbox("Status", ["All"] + db.STATUS_OPTIONS)
         with f2:
-            q = st.text_input("🔎 Search username / caption", "", key="dash_q")
-        view = df
+            q = st.text_input("🔎 Search username / caption", "")
+
+        view = df.copy()
         if sf != "All":
             view = view[view["status"] == sf]
         if q:
@@ -274,7 +376,6 @@ with tab_db:
 
         show_cols = ["status", "→ Sheet", "profile", "username", "followers",
                      "engagement_rate", "contact_email", "category", "notes", "reel_url"]
-        view = view.copy()
         view["→ Sheet"] = False
         view = view[[c for c in show_cols if c in view.columns]]
 
@@ -303,13 +404,13 @@ with tab_db:
                         changes.append({"reel_url": r["reel_url"], "status": r.get("status"),
                                         "notes": r.get("notes", "")})
                 if not changes:
-                    st.info("No changes.")
+                    st.info("No changes to save.")
                 else:
                     n, e = db.save_status_changes(changes)
                     st.success(f"✅ Saved {n} update(s).") if not e else st.error(e)
                     st.session_state.pop("dash_rows", None)
         with b2:
-            sheet_rows = edited[edited["→ Sheet"] == True]  # noqa: E712
+            sheet_rows = edited[edited["→ Sheet"] == True]  # noqa
             if st.button(f"📤 Send {len(sheet_rows)} → Sheet", use_container_width=True,
                          disabled=len(sheet_rows) == 0):
                 payload = [{"name": r.get("username"), "username": r.get("username"),
@@ -320,3 +421,40 @@ with tab_db:
         with b3:
             st.download_button("⬇️ Excel", data=to_excel(view),
                                file_name="creators.xlsx", use_container_width=True)
+
+
+# ── Page: Install Agent ───────────────────────────────────────────────────────
+elif page == "📲 Install Agent":
+    st.title("Install Agent")
+    st.caption("Set up your laptop to run scrapes. One-time setup, then just double-click.")
+
+    st.markdown("---")
+    st.markdown("### Step 1 — Download the folder")
+    st.info("Ask Rohit to share the `CreatorScout` folder (Google Drive / zip).")
+
+    st.markdown("### Step 2 — Edit config.txt")
+    st.markdown("Open `config.txt` inside the folder and change only your name:")
+    st.code("""NAME=YourName
+SUPABASE_URL=<ask Rohit for the URL>
+SUPABASE_KEY=<ask Rohit for the key>""", language="text")
+
+    st.markdown("### Step 3 — Install Python (if not already)")
+    st.markdown("Download from [python.org/downloads](https://www.python.org/downloads/) → install → done.")
+
+    st.markdown("### Step 4 — Double-click to run")
+    st.markdown("Double-click **`CreatorScout-Agent.command`** → terminal opens → first time takes ~2 min to setup.")
+
+    st.markdown("### Step 5 — First scrape = Instagram login")
+    st.markdown(
+        "Queue a scrape from **New Scrape**. A Chrome window opens — log into your Instagram burner account. "
+        "Login is saved — you won't need to do this again."
+    )
+
+    st.divider()
+    st.markdown("**Stopping & restarting**")
+    st.markdown(
+        "Minimise the terminal — don't close it while scraping. "
+        "To stop: click terminal → **Ctrl + C**. "
+        "To restart: double-click `CreatorScout-Agent.command` again."
+    )
+    st.caption("Your Instagram login is saved locally on your machine. It never leaves your computer.")
