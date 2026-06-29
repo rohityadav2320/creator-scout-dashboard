@@ -448,36 +448,54 @@ elif page == "🗄️ Creators / CRM":
 
 # ── Page: Install Agent ───────────────────────────────────────────────────────
 elif page == "📲 Install Agent":
-    st.title("Install Agent")
-    st.caption("Set up your laptop to run scrapes. One-time setup, then just double-click.")
+    # ── UPDATE THESE LINKS after uploading to Google Drive ──────────────────
+    MAC_LINK = "https://drive.google.com/file/d/1TdBpX70Ur-3ghphvsMspFm1tXm-1ge6F/view?usp=sharing"
+    WIN_LINK = "https://drive.google.com/file/d/1qYL52UIHMxMK0EWF4zkoqwYmO-4n26nd/view?usp=sharing"
+    # ────────────────────────────────────────────────────────────────────────
+
+    st.title("📲 Install Agent")
+    st.caption("Run scrapes directly from your laptop. One-time download — just double-click to start.")
 
     st.markdown("---")
-    st.markdown("### Step 1 — Download the folder")
-    st.info("Ask Rohit to share the `CreatorScout` folder (Google Drive / zip).")
 
-    st.markdown("### Step 2 — Edit config.txt")
-    st.markdown("Open `config.txt` inside the folder and change only your name:")
-    st.code("""NAME=YourName
-SUPABASE_URL=<ask Rohit for the URL>
-SUPABASE_KEY=<ask Rohit for the key>""", language="text")
+    # Download buttons
+    col_mac, col_win = st.columns(2)
+    with col_mac:
+        st.markdown("### 🍎 Mac")
+        st.link_button("⬇️ Download for Mac", MAC_LINK, use_container_width=True)
+    with col_win:
+        st.markdown("### 🪟 Windows")
+        st.link_button("⬇️ Download for Windows", WIN_LINK, use_container_width=True)
 
-    st.markdown("### Step 3 — Install Python (if not already)")
-    st.markdown("Download from [python.org/downloads](https://www.python.org/downloads/) → install → done.")
+    st.markdown("---")
+    st.markdown("## Setup — 3 steps only")
 
-    st.markdown("### Step 4 — Double-click to run")
-    st.markdown("Double-click **`CreatorScout-Agent.command`** → terminal opens → first time takes ~2 min to setup.")
+    st.markdown("#### Step 1 — Download")
+    st.markdown("Click the button above for your OS (Mac or Windows) and save the file anywhere.")
 
-    st.markdown("### Step 5 — First scrape = Instagram login")
-    st.markdown(
-        "Queue a scrape from **New Scrape**. A Chrome window opens — log into your Instagram burner account. "
-        "Login is saved — you won't need to do this again."
+    st.markdown("#### Step 2 — Double-click to open")
+    st.info(
+        "**Mac:** If you see *'cannot be opened because it is from an unidentified developer'* →  "
+        "Right-click the file → **Open** → click **Open** again.\n\n"
+        "**Windows:** If SmartScreen appears → click **More info** → **Run anyway**."
     )
 
-    st.divider()
-    st.markdown("**Stopping & restarting**")
+    st.markdown("#### Step 3 — Type your name → Done! 🚀")
     st.markdown(
-        "Minimise the terminal — don't close it while scraping. "
-        "To stop: click terminal → **Ctrl + C**. "
-        "To restart: double-click `CreatorScout-Agent.command` again."
+        "A terminal window opens. On **first run only**, type your name and press Enter.  \n"
+        "The agent starts and shows:  \n"
+        "> `Agent 'YourName' online. Watching for jobs…`  \n\n"
+        "You're ready! Go to **New Scrape**, queue a job, and it will run on your laptop automatically."
     )
-    st.caption("Your Instagram login is saved locally on your machine. It never leaves your computer.")
+
+    st.markdown("---")
+    st.markdown("#### 📋 Good to know")
+    st.markdown("""
+- **First run** downloads Chrome (~150 MB) — takes ~2 min, happens once only
+- **Keep terminal open** while scraping (minimise is fine, don't close it)
+- **Stop:** press `Ctrl + C` in the terminal
+- **Restart:** double-click the file again — no setup needed
+- **Instagram login** is saved on your machine only, never shared anywhere
+""")
+
+    st.caption("Each team member runs the agent on their own laptop under their own Instagram account.")
