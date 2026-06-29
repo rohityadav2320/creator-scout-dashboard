@@ -141,7 +141,7 @@ with tab_new:
                     st.success(f"✅ Queued job #{jid} for **{acct}** — {', '.join(tags)}")
                 else:
                     st.error(f"❌ {err}")
-    else:
+    elif jtype == "Reference creator":
         seeds_in = st.text_area("Seed creator username(s) (comma separated)",
                                 placeholder="some_creator, another_creator")
         c1, c2 = st.columns(2)
