@@ -200,6 +200,12 @@ elif page == "➕ New Scrape":
                 "by watching niche reels — the algorithm remembers. "
                 "Scraping here does NOT change the feed (no watch signals sent)."
             )
+            feed_hashtags_in = st.text_input(
+                "Filter by hashtags",
+                placeholder="e.g. fashionreels, ootd, streetstyle",
+                help="Only save reels that contain these hashtags in their caption. "
+                     "Leave blank to save all reels from the feed.",
+            )
             c1, c2 = st.columns(2)
             with c1:
                 max_creators = st.number_input("Max reels to scan", 10, 300, 50, step=10)
@@ -272,10 +278,11 @@ elif page == "➕ New Scrape":
                             st.error(f"❌ {err}")
 
                 else:  # Trained Feed
+                    feed_tags = [t.strip().lstrip("#") for t in feed_hashtags_in.replace(",", " ").split() if t.strip()]
                     jid, err = db.create_job(
                         "trained_feed",
                         {"max": int(max_creators), "min_followers": int(min_followers),
-                         "ig_account": ig},
+                         "ig_account": ig, "feed_hashtags": feed_tags},
                         account_label=acct, created_by=me)
                     if not err:
                         st.success(f"✅ Queued! Trained feed job #{jid} on **{acct}** as **@{ig}**")
