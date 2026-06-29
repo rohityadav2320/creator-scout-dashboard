@@ -208,24 +208,37 @@ elif page == "➕ New Scrape":
 
         st.divider()
 
-        # Agent + name row
+        # Instagram account to scrape WITH
+        ig_account = st.text_input(
+            "Instagram account to scrape with",
+            placeholder="e.g. my_burner_account",
+            help="The Instagram login used for this scrape. First time you use a new account, "
+                 "a Chrome window opens — log in once by hand. After that the login is saved "
+                 "and reused automatically.",
+        )
+
+        # Agent (laptop) + name row
         a1, a2 = st.columns(2)
         with a1:
             acct = st.selectbox(
-                "Run on account",
+                "Run on (your laptop)",
                 options=(online_labels or ["(no agent online)"]),
+                help="Which team laptop runs the scrape. This is the machine, not the Instagram account.",
             )
             if online_agents:
                 st.markdown(f"🟢 Online: **{acct}**")
             else:
-                st.markdown("⚪ No agents online — start `agent.py` first")
+                st.markdown("⚪ No agents online — start the agent first")
         with a2:
             me = st.text_input("Your name", placeholder="e.g. Priya")
 
         # Queue button
         if st.button("▶ Start scrape", type="primary", use_container_width=True):
+            ig = ig_account.strip().lstrip("@")
             if not online_labels:
                 st.error("No agent online. Start the agent on your laptop first.")
+            elif not ig:
+                st.error("Enter the Instagram account to scrape with.")
             else:
                 if scrape_type == "Hashtag search":
                     tags = [t.strip().lstrip("#") for t in keywords.replace(",", " ").split() if t.strip()]
@@ -235,10 +248,11 @@ elif page == "➕ New Scrape":
                         jid, err = db.create_job(
                             "hashtag",
                             {"hashtags": tags, "max": int(max_creators),
-                             "enrich": bool(enrich), "min_followers": int(min_followers)},
+                             "enrich": bool(enrich), "min_followers": int(min_followers),
+                             "ig_account": ig},
                             account_label=acct, created_by=me)
                         if not err:
-                            st.success(f"✅ Queued! Job #{jid} for **{acct}** — {', '.join(tags[:3])}")
+                            st.success(f"✅ Queued! Job #{jid} on **{acct}** as **@{ig}** — {', '.join(tags[:3])}")
                         else:
                             st.error(f"❌ {err}")
 
@@ -249,20 +263,22 @@ elif page == "➕ New Scrape":
                     else:
                         jid, err = db.create_job(
                             "reference",
-                            {"seeds": seeds, "max": int(max_creators), "depth": int(depth)},
+                            {"seeds": seeds, "max": int(max_creators), "depth": int(depth),
+                             "ig_account": ig},
                             account_label=acct, created_by=me)
                         if not err:
-                            st.success(f"✅ Queued! Job #{jid} for **{acct}** — @{', @'.join(seeds)}")
+                            st.success(f"✅ Queued! Job #{jid} on **{acct}** as **@{ig}** — @{', @'.join(seeds)}")
                         else:
                             st.error(f"❌ {err}")
 
                 else:  # Trained Feed
                     jid, err = db.create_job(
                         "trained_feed",
-                        {"max": int(max_creators), "min_followers": int(min_followers)},
+                        {"max": int(max_creators), "min_followers": int(min_followers),
+                         "ig_account": ig},
                         account_label=acct, created_by=me)
                     if not err:
-                        st.success(f"✅ Queued! Trained feed job #{jid} for **{acct}**")
+                        st.success(f"✅ Queued! Trained feed job #{jid} on **{acct}** as **@{ig}**")
                     else:
                         st.error(f"❌ {err}")
 
